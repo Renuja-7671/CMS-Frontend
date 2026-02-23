@@ -3,12 +3,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import { Pagination } from '../components/ui/pagination';
 import { Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { cardRequestService } from '../services/cardService';
 import type { CardRequestDetailDTO, PageResponse } from '../types/card';
 import { handleApiError, logError } from '../utils/errorHandler';
+import { getActiveUsers } from '../services/userService';
+import type { UserDTO } from '../types/user';
 
 type ActionType = 'approve' | 'reject';
 
@@ -34,6 +37,11 @@ const RequestConfirmation = () => {
   const [currentPage, setCurrentPage] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const [paginationInfo, setPaginationInfo] = useState<PageResponse<CardRequestDetailDTO> | null>(null);
+  
+  // User selection state
+  const [activeUsers, setActiveUsers] = useState<UserDTO[]>([]);
+  const [selectedApprovedUser, setSelectedApprovedUser] = useState<string>('');
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
     isOpen: false,
@@ -65,6 +73,28 @@ const RequestConfirmation = () => {
     fetchPendingRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize]);
+
+  // Fetch active users on mount
+  useEffect(() => {
+    const loadActiveUsers = async () => {
+      setIsLoadingUsers(true);
+      try {
+        const users = await getActiveUsers();
+        setActiveUsers(users);
+        // Auto-select first user if available
+        if (users.length > 0) {
+          setSelectedApprovedUser(users[0].userName);
+        }
+      } catch (error) {
+        console.error('Error loading active users:', error);
+        setActiveUsers([]);
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    };
+    
+    loadActiveUsers();
+  }, []);
 
   // Filter requests based on request type and search query
   useEffect(() => {
@@ -111,10 +141,16 @@ const RequestConfirmation = () => {
         return;
       }
 
+      // Validate user is selected
+      if (!selectedApprovedUser || selectedApprovedUser.trim().length === 0) {
+        handleApiError(new Error('Please select a user to process the request'), 'Process Request');
+        return;
+      }
+
       if (action === 'approve') {
-        await cardRequestService.approveRequest(request.requestId);
+        await cardRequestService.approveRequest(request.requestId, selectedApprovedUser);
       } else {
-        await cardRequestService.rejectRequest(request.requestId);
+        await cardRequestService.rejectRequest(request.requestId, selectedApprovedUser);
       }
 
       // Close dialog
@@ -685,6 +721,35 @@ const RequestConfirmation = () => {
                       {getActionText(confirmDialog.request.requestType, confirmDialog.action)}
                     </div>
                   </div>
+                  
+                  {/* User Selection Dropdown */}
+                  <div className="space-y-2 pt-3">
+                    <Label htmlFor="approvedUser" className="text-sm font-semibold text-gray-700">
+                      {confirmDialog.action === 'approve' ? 'Approved' : 'Rejected'} By <span className="text-red-500">*</span>
+                    </Label>
+                    <select
+                      id="approvedUser"
+                      value={selectedApprovedUser}
+                      onChange={(e) => setSelectedApprovedUser(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed text-sm"
+                      disabled={isLoadingUsers}
+                      required
+                    >
+                      <option value="">-- Select User --</option>
+                      {activeUsers.map((user) => (
+                        <option key={user.userName} value={user.userName}>
+                          {user.name} ({user.userName})
+                        </option>
+                      ))}
+                    </select>
+                    {isLoadingUsers && (
+                      <p className="text-xs text-gray-500">Loading users...</p>
+                    )}
+                    {!isLoadingUsers && activeUsers.length === 0 && (
+                      <p className="text-xs text-red-500">No active users available</p>
+                    )}
+                  </div>
+                  
                   {confirmDialog.action === 'approve' && confirmDialog.request.requestType === 'ACTI' && (
                     <p className="text-xs text-blue-600 mt-2">
                       ℹ️ The card will be activated and status will change to Active
@@ -713,6 +778,7 @@ const RequestConfirmation = () => {
             </Button>
             <Button
               onClick={handleConfirmAction}
+              disabled={!selectedApprovedUser}
               variant={confirmDialog.action === 'reject' ? 'destructive' : 'default'}
             >
               Confirm

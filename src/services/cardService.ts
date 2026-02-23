@@ -160,13 +160,17 @@ export const cardRequestService = {
     return response.data;
   },
   
-  approveRequest: async (requestId: number) => {
-    const response = await api.put<ApiResponse<CardRequestDetailDTO>>(`/card-requests/${requestId}/approve/details`);
+  approveRequest: async (requestId: number, approvedUser: string) => {
+    const response = await api.put<ApiResponse<CardRequestDetailDTO>>(
+      `/card-requests/${requestId}/approve/details?approvedUser=${encodeURIComponent(approvedUser)}`
+    );
     return response.data;
   },
   
-  rejectRequest: async (requestId: number) => {
-    const response = await api.put<ApiResponse<CardRequestDetailDTO>>(`/card-requests/${requestId}/reject/details`);
+  rejectRequest: async (requestId: number, approvedUser: string) => {
+    const response = await api.put<ApiResponse<CardRequestDetailDTO>>(
+      `/card-requests/${requestId}/reject/details?approvedUser=${encodeURIComponent(approvedUser)}`
+    );
     return response.data;
   },
 };

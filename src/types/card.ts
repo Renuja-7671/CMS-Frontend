@@ -15,6 +15,7 @@ export interface CreateCardBackendRequest {
   expiryDate: string;
   creditLimit: number;
   cashLimit: number;
+  lastUpdatedUser: string;
 }
 
 // Update card request for backend
@@ -26,6 +27,7 @@ export interface UpdateCardRequest {
   cashLimit: number;
   availableCreditLimit: number;
   availableCashLimit: number;
+  lastUpdatedUser: string;
 }
 
 export interface ApiResponse<T> {
@@ -60,6 +62,7 @@ export interface CreateCardRequestDTO {
   encryptionKey: string;
   requestType: 'ACTI' | 'CDCL';  // ACTI = Activation, CDCL = Card Close (Deactivation)
   reason?: string;
+  requestedUser: string;  // Username of the user creating the request
 }
 
 export interface CardRequestDTO {

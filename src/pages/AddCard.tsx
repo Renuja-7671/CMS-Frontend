@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Calendar, CheckCircle2, AlertCircle, RefreshCw, Lock, Edit2, Search } from 'lucide-react';
+import { CreditCard, Calendar, CheckCircle2, AlertCircle, RefreshCw, Lock, Edit2, Search, User } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -14,6 +14,7 @@ import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '../components/ui/dialog';
 import { Pagination } from '../components/ui/pagination';
 import { cardService, type CardDTO } from '../services/cardService';
+import { getAllUsers, type UserDTO } from '../services/userService';
 import type { CreateCardRequest, UpdateCardRequest, PageResponse } from '../types/card';
 import { encryptPayload } from '../utils/encryptionUtil';
 import { fetchPublicKey, encryptAESKey } from '../utils/rsaEncryptionUtil';
@@ -67,6 +68,37 @@ export default function AddCard() {
     availableCashLimit: 0,
   });
   const [isUpdating, setIsUpdating] = useState(false);
+
+  // User selection state
+  const [allUsers, setAllUsers] = useState<UserDTO[]>([]);
+  const [selectedUser, setSelectedUser] = useState<string>('');
+  const [selectedUpdateUser, setSelectedUpdateUser] = useState<string>('');
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+
+  // Fetch all users on component mount
+  useEffect(() => {
+    const fetchUsers = async () => {
+      setIsLoadingUsers(true);
+      setUsersError(null);
+      try {
+        const users = await getAllUsers();
+        setAllUsers(users);
+        // Auto-select first active user if available
+        const firstActiveUser = users.find(u => u.status === 'ACT');
+        if (firstActiveUser) {
+          setSelectedUser(firstActiveUser.userName);
+          setSelectedUpdateUser(firstActiveUser.userName);
+        }
+      } catch (error) {
+        const errorMessage = handleApiError(error, 'Fetch Users');
+        setUsersError(errorMessage);
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    };
+    fetchUsers();
+  }, []);
 
   // Fetch all cards with pagination and filters
   const fetchCards = async () => {
@@ -293,6 +325,15 @@ export default function AddCard() {
     setSubmitStatus({ type: null, message: '' });
 
     try {
+      // Validate user is selected
+      if (!selectedUser) {
+        setSubmitStatus({
+          type: 'error',
+          message: 'Please select a user before submitting.',
+        });
+        return;
+      }
+
       // Convert expiryDate from "YYYY-MM" to "YYYY-MM-01" (first day of the month)
       const expiryDateFormatted = formData.expiryDate ? `${formData.expiryDate}-01` : '';
       
@@ -302,6 +343,7 @@ export default function AddCard() {
         expiryDate: expiryDateFormatted,
         creditLimit: formData.creditLimit,
         cashLimit: formData.cashLimit,
+        lastUpdatedUser: selectedUser,
       };
       
       // ============================================
@@ -385,6 +427,15 @@ export default function AddCard() {
     setSubmitStatus({ type: null, message: '' });
 
     try {
+      // Validate user is selected
+      if (!selectedUpdateUser) {
+        setSubmitStatus({
+          type: 'error',
+          message: 'Please select a user before submitting.',
+        });
+        return;
+      }
+
       const expiryDateFormatted = editFormData.expiryDate ? `${editFormData.expiryDate}-01` : '';
       
       const updatePayload: UpdateCardRequest = {
@@ -395,6 +446,7 @@ export default function AddCard() {
         cashLimit: editFormData.cashLimit,
         availableCreditLimit: editFormData.availableCreditLimit,
         availableCashLimit: editFormData.availableCashLimit,
+        lastUpdatedUser: selectedUpdateUser,
       };
 
       const response = await cardService.updateCard(updatePayload);
@@ -506,6 +558,39 @@ export default function AddCard() {
               {/* Form Fields */}
               <div>
                 <form onSubmit={handleSubmit} className="space-y-5">
+                  {/* User Selection Dropdown - At Top */}
+                  <div className="space-y-1.5 pb-4 border-b border-gray-200">
+                    <Label htmlFor="selectedUser" className="text-sm font-medium flex items-center gap-1.5 text-gray-700">
+                      <User className="h-3.5 w-3.5 text-blue-900" />
+                      Created By <span className="text-red-500">*</span>
+                    </Label>
+                    {isLoadingUsers ? (
+                      <div className="text-sm text-gray-500">Loading users...</div>
+                    ) : usersError ? (
+                      <div className="text-sm text-red-600">{usersError}</div>
+                    ) : (
+                      <select
+                        id="selectedUser"
+                        value={selectedUser}
+                        onChange={(e) => setSelectedUser(e.target.value)}
+                        required
+                        className="w-full h-10 border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Select a user</option>
+                        {allUsers.map((user) => (
+                          <option
+                            key={user.userName}
+                            value={user.userName}
+                            disabled={user.status !== 'ACT'}
+                            className={user.status === 'ACT' ? 'text-gray-900' : 'text-gray-400 bg-gray-100'}
+                          >
+                            {user.name} ({user.userName}) {user.status !== 'ACT' ? '- Inactive' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
                   {/* Card Number and Expiry Date Row */}
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
@@ -936,6 +1021,41 @@ export default function AddCard() {
             
             {editingCard && (
               <form onSubmit={handleUpdateSubmit} className="px-6 pb-6 space-y-4">
+                {/* User Selection Dropdown */}
+                <div className="space-y-2">
+                  <Label htmlFor="selectedUpdateUser" className="text-sm font-medium text-gray-700">
+                    <div className="flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-blue-900" />
+                      Updated By <span className="text-red-500">*</span>
+                    </div>
+                  </Label>
+                  {isLoadingUsers ? (
+                    <div className="text-sm text-gray-500">Loading users...</div>
+                  ) : usersError ? (
+                    <div className="text-sm text-red-600">{usersError}</div>
+                  ) : (
+                    <select
+                      id="selectedUpdateUser"
+                      value={selectedUpdateUser}
+                      onChange={(e) => setSelectedUpdateUser(e.target.value)}
+                      required
+                      className="w-full h-10 border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="">Select a user</option>
+                      {allUsers.map((user) => (
+                        <option
+                          key={user.userName}
+                          value={user.userName}
+                          disabled={user.status !== 'ACT'}
+                          className={user.status === 'ACT' ? 'text-gray-900' : 'text-gray-400 bg-gray-100'}
+                        >
+                          {user.name} ({user.userName}) {user.status !== 'ACT' ? '- Inactive' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
                 {/* Card Number (Read-only) */}
                 <div className="space-y-2">
                   <Label className="text-sm font-medium text-gray-700">

@@ -2,13 +2,25 @@ import { AxiosError } from 'axios';
 import type { ApiResponse } from '../types/card';
 
 /**
+ * Error type with custom properties
+ */
+interface CustomError {
+  isApiError?: boolean;
+  response?: {
+    data?: unknown;
+  };
+  code?: string;
+  message?: string;
+}
+
+/**
  * Extract error message from backend API response
  * Backend returns 200 OK for all responses with success flag
  */
-function extractBackendMessage(error: AxiosError | any): string {
+function extractBackendMessage(error: AxiosError | CustomError): string {
   // Check if this is an API error from our interceptor
-  if (error.isApiError && error.response?.data) {
-    const apiResponse = error.response.data as ApiResponse<any>;
+  if ('isApiError' in error && error.isApiError && error.response?.data) {
+    const apiResponse = error.response.data as ApiResponse<unknown>;
     
     // Get message from ApiResponse
     let message = apiResponse.message || 'An error occurred';
@@ -29,8 +41,8 @@ function extractBackendMessage(error: AxiosError | any): string {
   // Handle axios errors (network errors, timeouts, etc.)
   if (error.response) {
     // Server responded but not with our API structure
-    const data = error.response.data as any;
-    return data?.message || 'An error occurred';
+    const data = error.response.data as Record<string, unknown>;
+    return (typeof data?.message === 'string' ? data.message : null) || 'An error occurred';
   }
   
   // Network or request setup error
@@ -50,8 +62,8 @@ function extractBackendMessage(error: AxiosError | any): string {
  */
 export function getErrorMessage(error: unknown): string {
   // Check if this is our custom API error from the interceptor
-  if ((error as any)?.isApiError) {
-    return extractBackendMessage(error);
+  if (typeof error === 'object' && error !== null && 'isApiError' in error) {
+    return extractBackendMessage(error as CustomError);
   }
   
   // Check if this is an AxiosError
@@ -74,7 +86,7 @@ export function getErrorMessage(error: unknown): string {
 export function logError(error: unknown, context?: string): void {
   if (import.meta.env.DEV) {
     // Check if this is an API error from our backend
-    const isApiError = (error as any)?.isApiError;
+    const isApiError = typeof error === 'object' && error !== null && 'isApiError' in error;
     
     if (isApiError) {
       // API errors are already visible in Network tab - no need to log

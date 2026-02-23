@@ -17,6 +17,8 @@ import { Pagination } from '../components/ui/pagination';
 import { cardService, cardRequestService, type CardDTO } from '../services/cardService';
 import type { CreateCardRequestDTO, CardRequestDTO, PageResponse } from '../types/card';
 import { handleApiError } from '../utils/errorHandler';
+import { getActiveUsers } from '../services/userService';
+import type { UserDTO } from '../types/user';
 
 export default function CardRequest() {
   const [cards, setCards] = useState<CardDTO[]>([]);
@@ -32,6 +34,11 @@ export default function CardRequest() {
   
   // Pending requests state
   const [pendingRequests, setPendingRequests] = useState<CardRequestDTO[]>([]);
+  
+  // User selection state
+  const [activeUsers, setActiveUsers] = useState<UserDTO[]>([]);
+  const [selectedRequestedUser, setSelectedRequestedUser] = useState<string>('');
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   
   // Dialog state
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
@@ -97,6 +104,28 @@ export default function CardRequest() {
   useEffect(() => {
     fetchPendingRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetch active users on mount
+  useEffect(() => {
+    const loadActiveUsers = async () => {
+      setIsLoadingUsers(true);
+      try {
+        const users = await getActiveUsers();
+        setActiveUsers(users);
+        // Auto-select first user if available
+        if (users.length > 0) {
+          setSelectedRequestedUser(users[0].userName);
+        }
+      } catch (error) {
+        console.error('Error loading active users:', error);
+        setActiveUsers([]);
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    };
+    
+    loadActiveUsers();
   }, []);
 
   // Check if a card has a pending request
@@ -261,6 +290,16 @@ export default function CardRequest() {
       return;
     }
 
+    // Validate user is selected
+    if (!selectedRequestedUser || selectedRequestedUser.trim().length === 0) {
+      setSubmitStatus({
+        type: 'error',
+        message: 'Please select a user to create the request.',
+      });
+      setTimeout(() => setSubmitStatus({ type: null, message: '' }), 3000);
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitStatus({ type: null, message: '' });
 
@@ -270,6 +309,7 @@ export default function CardRequest() {
         encryptionKey: selectedCard.encryptionKey,
         requestType: requestAction,
         reason: requestReason.trim(),
+        requestedUser: selectedRequestedUser,
       };
 
       const response = await cardRequestService.createCardRequest(requestPayload);
@@ -684,6 +724,34 @@ export default function CardRequest() {
                 </div>
               </div>
 
+              {/* User Selection Dropdown */}
+              <div className="space-y-2">
+                <Label htmlFor="requestedUser" className="text-sm font-semibold text-gray-700">
+                  Requested By <span className="text-red-500">*</span>
+                </Label>
+                <select
+                  id="requestedUser"
+                  value={selectedRequestedUser}
+                  onChange={(e) => setSelectedRequestedUser(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  disabled={isSubmitting || isLoadingUsers}
+                  required
+                >
+                  <option value="">-- Select User --</option>
+                  {activeUsers.map((user) => (
+                    <option key={user.userName} value={user.userName}>
+                      {user.name} ({user.userName})
+                    </option>
+                  ))}
+                </select>
+                {isLoadingUsers && (
+                  <p className="text-xs text-gray-500">Loading users...</p>
+                )}
+                {!isLoadingUsers && activeUsers.length === 0 && (
+                  <p className="text-xs text-red-500">No active users available</p>
+                )}
+              </div>
+
               {/* Warning message for deactivation */}
               {requestAction === 'CDCL' && (
                 <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -728,7 +796,7 @@ export default function CardRequest() {
                 </Button>
                 <Button
                   onClick={handleConfirmRequest}
-                  disabled={isSubmitting || !requestReason.trim()}
+                  disabled={isSubmitting || !requestReason.trim() || !selectedRequestedUser}
                   className={`flex-1 h-10 ${
                     requestAction === 'ACTI'
                       ? 'bg-green-600 hover:bg-green-700'
