@@ -46,7 +46,7 @@ export const getActiveUsers = async (): Promise<UserDTO[]> => {
   try {
     const response = await api.get<ApiResponse<UserDTO[]>>('/users/status/ACT');
     return response.data.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching active users:', error);
     throw error;
   }
@@ -59,7 +59,7 @@ export const getAllUsers = async (): Promise<UserDTO[]> => {
   try {
     const response = await api.get<ApiResponse<UserDTO[]>>('/users');
     return response.data.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching users:', error);
     throw error;
   }
@@ -72,7 +72,7 @@ export const getUserByUserName = async (userName: string): Promise<UserDTO> => {
   try {
     const response = await api.get<ApiResponse<UserDTO>>(`/users/${userName}`);
     return response.data.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(`Error fetching user ${userName}:`, error);
     throw error;
   }
