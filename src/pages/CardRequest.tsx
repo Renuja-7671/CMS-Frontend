@@ -13,17 +13,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '.
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
 import { Input } from '../components/ui/input';
+import { Pagination } from '../components/ui/pagination';
 import { cardService, cardRequestService, type CardDTO } from '../services/cardService';
-import type { CreateCardRequestDTO, CardRequestDTO } from '../types/card';
+import type { CreateCardRequestDTO, CardRequestDTO, PageResponse } from '../types/card';
 import { handleApiError } from '../utils/errorHandler';
 
 export default function CardRequest() {
   const [cards, setCards] = useState<CardDTO[]>([]);
-  const [filteredCards, setFilteredCards] = useState<CardDTO[]>([]);
   const [isLoadingCards, setIsLoadingCards] = useState(false);
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IACT' | 'CACT' | 'DACT'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [paginationInfo, setPaginationInfo] = useState<PageResponse<CardDTO> | null>(null);
   
   // Pending requests state
   const [pendingRequests, setPendingRequests] = useState<CardRequestDTO[]>([]);
@@ -41,13 +46,14 @@ export default function CardRequest() {
     message: string;
   }>({ type: null, message: '' });
 
-  // Fetch all cards
+  // Fetch all cards with pagination and filters
   const fetchCards = async () => {
     setIsLoadingCards(true);
     setCardsError(null);
     try {
-      const response = await cardService.getAllCards();
-      setCards(response.data || []);
+      const response = await cardService.getAllCardsPaginated(currentPage, pageSize, statusFilter, searchQuery);
+      setPaginationInfo(response.data);
+      setCards(response.data.content || []);
     } catch (error) {
       setCardsError(handleApiError(error, 'Fetch Cards'));
     } finally {
@@ -63,41 +69,35 @@ export default function CardRequest() {
       const pending = (response.data || []).filter(req => req.requestStatus === 'PEND');
       setPendingRequests(pending);
     } catch (error) {
-      // Silently handle - not critical for the main card request flow
-      // Log only in dev mode
-      if (import.meta.env.DEV) {
-        console.warn('Failed to fetch pending requests:', error);
-      }
+      console.error('Error fetching pending requests:', error);
+      // Don't show error to user - this is not critical
       // Set empty array to allow the page to continue functioning
       setPendingRequests([]);
     }
   };
 
-  // Fetch cards and pending requests on component mount
+  // Fetch cards when page, page size, status filter, or search query changes
+  // Reset to page 0 when filters change
+  useEffect(() => {
+    if (currentPage === 0) {
+      fetchCards();
+    } else {
+      setCurrentPage(0); // This will trigger the effect again with page 0
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, searchQuery]);
+
+  // Fetch cards when page or page size changes
   useEffect(() => {
     fetchCards();
-    fetchPendingRequests();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize]);
 
-  // Filter cards based on status and search query
+  // Fetch pending requests on mount
   useEffect(() => {
-    let filtered = cards;
-    
-    // Filter by status
-    if (statusFilter !== 'ALL') {
-      filtered = filtered.filter(card => card.cardStatus === statusFilter);
-    }
-    
-    // Filter by search query (card number)
-    if (searchQuery.trim()) {
-      const query = searchQuery.trim().toLowerCase();
-      filtered = filtered.filter(card => 
-        card.displayCardNumber?.toLowerCase().includes(query)
-      );
-    }
-    
-    setFilteredCards(filtered);
-  }, [cards, statusFilter, searchQuery]);
+    fetchPendingRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Check if a card has a pending request
   const hasPendingRequest = (displayCardNumber: string): boolean => {
@@ -429,7 +429,7 @@ export default function CardRequest() {
                   size="sm"
                   className={statusFilter === 'IACT' ? 'bg-blue-900 hover:bg-blue-950' : 'hover:bg-gray-100'}
                 >
-                  Inactive ({cards.filter(c => c.cardStatus === 'IACT').length})
+                  Inactive
                 </Button>
                 <Button
                   onClick={() => setStatusFilter('CACT')}
@@ -437,7 +437,7 @@ export default function CardRequest() {
                   size="sm"
                   className={statusFilter === 'CACT' ? 'bg-blue-900 hover:bg-blue-950' : 'hover:bg-gray-100'}
                 >
-                  Active ({cards.filter(c => c.cardStatus === 'CACT').length})
+                  Active
                 </Button>
                 <Button
                   onClick={() => setStatusFilter('DACT')}
@@ -445,7 +445,7 @@ export default function CardRequest() {
                   size="sm"
                   className={statusFilter === 'DACT' ? 'bg-blue-900 hover:bg-blue-950' : 'hover:bg-gray-100'}
                 >
-                  Deactivated ({cards.filter(c => c.cardStatus === 'DACT').length})
+                  Deactivated
                 </Button>
               </div>
             </div>
@@ -477,7 +477,7 @@ export default function CardRequest() {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
               <p className="text-gray-600">Loading cards...</p>
             </div>
-          ) : filteredCards.length === 0 ? (
+          ) : cards.length === 0 ? (
             <div className="p-12 text-center text-gray-500">
               <FileText className="h-16 w-16 mx-auto mb-4 opacity-20" />
               <p className="text-lg font-medium">No cards found</p>
@@ -491,7 +491,7 @@ export default function CardRequest() {
             </div>
           ) : (
             <div className="p-6 space-y-3">
-              {filteredCards.map((card, index) => (
+              {cards.map((card, index) => (
                 <div 
                   key={index} 
                   className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow duration-200"
@@ -583,6 +583,23 @@ export default function CardRequest() {
             </div>
           )}
         </CardContent>
+        
+        {/* Pagination */}
+        {paginationInfo && paginationInfo.totalElements > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={paginationInfo.totalPages}
+            onPageChange={(page) => setCurrentPage(page)}
+            pageSize={pageSize}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setCurrentPage(0);
+            }}
+            totalElements={paginationInfo.totalElements}
+            hasNext={paginationInfo.hasNext}
+            hasPrevious={paginationInfo.hasPrevious}
+          />
+        )}
       </Card>
 
       {/* Confirmation Dialog */}

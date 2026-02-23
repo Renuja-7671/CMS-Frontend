@@ -12,8 +12,9 @@ import {
 } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '../components/ui/dialog';
+import { Pagination } from '../components/ui/pagination';
 import { cardService, type CardDTO } from '../services/cardService';
-import type { CreateCardRequest, UpdateCardRequest } from '../types/card';
+import type { CreateCardRequest, UpdateCardRequest, PageResponse } from '../types/card';
 import { encryptPayload } from '../utils/encryptionUtil';
 import { fetchPublicKey, encryptAESKey } from '../utils/rsaEncryptionUtil';
 import { handleApiError } from '../utils/errorHandler';
@@ -46,10 +47,14 @@ export default function AddCard() {
   const [isLoadingCards, setIsLoadingCards] = useState(false);
   const [cardsError, setCardsError] = useState<string | null>(null);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [paginationInfo, setPaginationInfo] = useState<PageResponse<CardDTO> | null>(null);
+
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IACT' | 'CACT' | 'DACT'>('ALL');
-  const [filteredCards, setFilteredCards] = useState<CardDTO[]>([]);
 
   // Edit card state
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -63,14 +68,14 @@ export default function AddCard() {
   });
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Fetch all cards
+  // Fetch all cards with pagination and filters
   const fetchCards = async () => {
     setIsLoadingCards(true);
     setCardsError(null);
     try {
-      const response = await cardService.getAllCards();
-      // Cards include encryptionKey for each card, which will be used for PUT requests
-      setCards(response.data || []);
+      const response = await cardService.getAllCardsPaginated(currentPage, pageSize, statusFilter, searchQuery);
+      setPaginationInfo(response.data);
+      setCards(response.data.content || []);
     } catch (error) {
       const errorMessage = handleApiError(error, 'Fetch Cards');
       setCardsError(errorMessage);
@@ -79,10 +84,22 @@ export default function AddCard() {
     }
   };
 
-  // Fetch cards on component mount
+  // Fetch cards when page, page size, status filter, or search query changes
+  // Reset to page 0 when filters change
+  useEffect(() => {
+    if (currentPage === 0) {
+      fetchCards();
+    } else {
+      setCurrentPage(0); // This will trigger the effect again with page 0
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, searchQuery]);
+
+  // Fetch cards when page or page size changes
   useEffect(() => {
     fetchCards();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize]);
 
   // Validation functions
   const validateExpiryDate = (expiryDate: string): string | null => {
@@ -149,25 +166,6 @@ export default function AddCard() {
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
-
-  // Filter and search cards
-  useEffect(() => {
-    let result = cards;
-
-    // Filter by status
-    if (statusFilter !== 'ALL') {
-      result = result.filter(card => card.cardStatus === statusFilter);
-    }
-
-    // Filter by search query (card number)
-    if (searchQuery.trim() !== '') {
-      result = result.filter(card =>
-        card.displayCardNumber.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    setFilteredCards(result);
-  }, [cards, statusFilter, searchQuery]);
 
   // Format card number for display: first 6 + XXXXXX + last 4
   const formatDisplayCardNumber = (displayCardNumber: string) => {
@@ -781,7 +779,7 @@ export default function AddCard() {
                 <p className="text-lg font-medium">No cards found</p>
                 <p className="text-sm">Create your first card using the form above</p>
               </div>
-            ) : filteredCards.length === 0 ? (
+            ) : cards.length === 0 ? (
               <div className="p-12 text-center text-gray-500">
                 <Search className="h-16 w-16 mx-auto mb-4 opacity-20" />
                 <p className="text-lg font-medium">No cards match your search</p>
@@ -789,7 +787,7 @@ export default function AddCard() {
               </div>
             ) : (
               <div className="p-6 space-y-3">
-                {filteredCards.map((card, index) => (
+                {cards.map((card, index) => (
                   <div 
                     key={index} 
                     className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow duration-200"
@@ -907,6 +905,23 @@ export default function AddCard() {
               </div>
             )}
           </CardContent>
+          
+          {/* Pagination */}
+          {paginationInfo && paginationInfo.totalElements > 0 && (
+            <Pagination
+              currentPage={currentPage}
+              totalPages={paginationInfo.totalPages}
+              onPageChange={(page) => setCurrentPage(page)}
+              pageSize={pageSize}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setCurrentPage(0); // Reset to first page when changing page size
+              }}
+              totalElements={paginationInfo.totalElements}
+              hasNext={paginationInfo.hasNext}
+              hasPrevious={paginationInfo.hasPrevious}
+            />
+          )}
         </Card>
 
         {/* Edit Card Dialog */}

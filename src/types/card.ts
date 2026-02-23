@@ -34,6 +34,26 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+// Pagination types
+export interface PageResponse<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  first: boolean;
+  last: boolean;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
+export interface PageRequest {
+  page: number;
+  size: number;
+  sortBy?: string;
+  sortDirection?: string;
+}
+
 // Card Request types
 export interface CreateCardRequestDTO {
   displayCardNumber: string;

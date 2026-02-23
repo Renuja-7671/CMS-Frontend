@@ -3,10 +3,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
+import { Pagination } from '../components/ui/pagination';
 import { Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { cardRequestService } from '../services/cardService';
-import type { CardRequestDetailDTO } from '../types/card';
+import type { CardRequestDetailDTO, PageResponse } from '../types/card';
 import { handleApiError, logError } from '../utils/errorHandler';
 
 type ActionType = 'approve' | 'reject';
@@ -28,6 +29,12 @@ const RequestConfirmation = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [requestTypeFilter, setRequestTypeFilter] = useState<'ALL' | 'ACTI' | 'CDCL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [paginationInfo, setPaginationInfo] = useState<PageResponse<CardRequestDetailDTO> | null>(null);
+  
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
     isOpen: false,
     request: null,
@@ -38,9 +45,26 @@ const RequestConfirmation = () => {
     request: null,
   });
 
+  // Fetch pending requests with pagination
+  const fetchPendingRequests = async () => {
+    try {
+      setIsLoading(true);
+      const response = await cardRequestService.getPendingRequestsWithDetailsPaginated(currentPage, pageSize);
+      setPaginationInfo(response.data);
+      setRequests(response.data.content || []);
+    } catch (error) {
+      handleApiError(error, 'Failed to load pending requests');
+      setRequests([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Fetch when page or page size changes
   useEffect(() => {
     fetchPendingRequests();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize]);
 
   // Filter requests based on request type and search query
   useEffect(() => {
@@ -61,19 +85,6 @@ const RequestConfirmation = () => {
     
     setFilteredRequests(filtered);
   }, [requests, requestTypeFilter, searchQuery]);
-
-  const fetchPendingRequests = async () => {
-    try {
-      setIsLoading(true);
-      const response = await cardRequestService.getPendingRequestsWithDetails();
-      setRequests(response.data || []);
-    } catch (error) {
-      handleApiError(error, 'Failed to load pending requests');
-      setRequests([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleAction = (request: CardRequestDetailDTO, action: ActionType) => {
     try {
@@ -454,6 +465,23 @@ const RequestConfirmation = () => {
           </div>
         )}
       </CardContent>
+      
+      {/* Pagination */}
+      {paginationInfo && paginationInfo.totalElements > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalPages={paginationInfo.totalPages}
+          onPageChange={(page) => setCurrentPage(page)}
+          pageSize={pageSize}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setCurrentPage(0);
+          }}
+          totalElements={paginationInfo.totalElements}
+          hasNext={paginationInfo.hasNext}
+          hasPrevious={paginationInfo.hasPrevious}
+        />
+      )}
     </Card>
 
       {/* Details Dialog */}

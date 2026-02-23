@@ -1,43 +1,60 @@
 import { AxiosError } from 'axios';
-import type { BackendErrorResponse } from '../types/error';
+import type { ApiResponse } from '../types/card';
 
 /**
- * Extract error message from backend error response
+ * Extract error message from backend API response
+ * Backend returns 200 OK for all responses with success flag
  */
-function extractBackendMessage(error: AxiosError): string {
-  const response = error.response?.data as BackendErrorResponse | undefined;
-  
-  if (!response) {
-    // Network or request setup error
-    if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
-      return 'Network error. Please check your internet connection and ensure the server is running.';
+function extractBackendMessage(error: AxiosError | any): string {
+  // Check if this is an API error from our interceptor
+  if (error.isApiError && error.response?.data) {
+    const apiResponse = error.response.data as ApiResponse<any>;
+    
+    // Get message from ApiResponse
+    let message = apiResponse.message || 'An error occurred';
+    
+    // If data contains field-level validation errors (object with error messages)
+    if (apiResponse.data && typeof apiResponse.data === 'object' && !Array.isArray(apiResponse.data)) {
+      const fieldErrors = Object.entries(apiResponse.data)
+        .map(([field, msg]) => `${field}: ${msg}`)
+        .join(', ');
+      if (fieldErrors) {
+        message = `${message}\n${fieldErrors}`;
+      }
     }
     
-    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      return 'Request timeout. The server is taking too long to respond. Please try again.';
-    }
-    
-    return error.message || 'An unexpected error occurred.';
+    return message;
   }
-
-  // Get message from backend ErrorResponse
-  let message = response.message || 'An error occurred';
   
-  // If validation errors exist, append them
-  if (response.validationErrors && Object.keys(response.validationErrors).length > 0) {
-    const fieldErrors = Object.entries(response.validationErrors)
-      .map(([field, msg]) => `${field}: ${msg}`)
-      .join(', ');
-    message = `${message}. ${fieldErrors}`;
+  // Handle axios errors (network errors, timeouts, etc.)
+  if (error.response) {
+    // Server responded but not with our API structure
+    const data = error.response.data as any;
+    return data?.message || 'An error occurred';
   }
-
-  return message;
+  
+  // Network or request setup error
+  if (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
+    return 'Network error. Please check your internet connection and ensure the server is running.';
+  }
+  
+  if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+    return 'Request timeout. The server is taking too long to respond. Please try again.';
+  }
+  
+  return error.message || 'An unexpected error occurred.';
 }
 
 /**
  * Extract user-friendly error message from any error
  */
 export function getErrorMessage(error: unknown): string {
+  // Check if this is our custom API error from the interceptor
+  if ((error as any)?.isApiError) {
+    return extractBackendMessage(error);
+  }
+  
+  // Check if this is an AxiosError
   if (error instanceof AxiosError) {
     return extractBackendMessage(error);
   }
@@ -51,10 +68,22 @@ export function getErrorMessage(error: unknown): string {
 
 /**
  * Log error to console in development mode only
+ * API errors (isApiError: true) are not logged since they're visible in Network tab
+ * Only logs unexpected errors (network issues, unknown errors)
  */
 export function logError(error: unknown, context?: string): void {
   if (import.meta.env.DEV) {
+    // Check if this is an API error from our backend
+    const isApiError = (error as any)?.isApiError;
+    
+    if (isApiError) {
+      // API errors are already visible in Network tab - no need to log
+      return;
+    }
+    
+    // For network errors or unexpected errors, log the full error
     console.group(`❌ ${context || 'Error'}`);
+    console.error(error);
     console.groupEnd();
   }
 }

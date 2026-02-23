@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CreateCardBackendRequest, UpdateCardRequest, ApiResponse, CreateCardRequestDTO, CardRequestDTO, CardRequestDetailDTO } from '../types/card';
+import type { CreateCardBackendRequest, UpdateCardRequest, ApiResponse, PageResponse, CreateCardRequestDTO, CardRequestDTO, CardRequestDetailDTO } from '../types/card';
 
 const API_BASE_URL = 'http://localhost:8090/api';
 
@@ -11,22 +11,30 @@ const api = axios.create({
 });
 
 // Response interceptor for error handling
+// Backend returns 200 OK for all responses with a success flag
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Check if response has success flag (all API responses should have this)
+    if (response.data && typeof response.data.success === 'boolean') {
+      // If success is false, treat as error even though HTTP status is 200
+      if (!response.data.success) {
+        return Promise.reject({
+          response: response,
+          isApiError: true,
+          message: response.data.message || 'Operation failed'
+        });
+      }
+    }
+    return response;
+  },
   (error) => {
-    // Suppress console errors for expected API errors (4xx, 5xx)
-    // The error will still be caught by the calling code's catch block
-    
-    // Don't log expected API errors to console - they're handled in the UI
-    // Only log unexpected errors (network issues, etc.)
+    // Network error or request setup error (no response from server)
     if (!error.response) {
-      // Network error or request setup error
       if (import.meta.env.DEV) {
         console.error('Network/Request Error:', error.message);
       }
     }
-    // For all errors (including API errors), return rejected promise
-    // so the calling code can handle them
+    // For all errors, return rejected promise so calling code can handle them
     return Promise.reject(error);
   }
 );
@@ -89,6 +97,24 @@ export const cardService = {
     return response.data;
   },
   
+  getAllCardsPaginated: async (page: number = 0, size: number = 10, status?: string, search?: string) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      size: size.toString(),
+    });
+    
+    if (status && status !== 'ALL') {
+      params.append('status', status);
+    }
+    
+    if (search && search.trim() !== '') {
+      params.append('search', search.trim());
+    }
+    
+    const response = await api.get<ApiResponse<PageResponse<CardDTO>>>(`/cards/paginated?${params.toString()}`);
+    return response.data;
+  },
+  
   getCardsByStatus: async (status: string) => {
     const response = await api.get<ApiResponse<CardDTO[]>>(`/cards/status/${status}`);
     return response.data;
@@ -106,8 +132,31 @@ export const cardRequestService = {
     return response.data;
   },
   
+  getAllCardRequestsPaginated: async (page: number = 0, size: number = 10, status?: string, search?: string) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      size: size.toString(),
+    });
+    
+    if (status && status !== 'ALL') {
+      params.append('status', status);
+    }
+    
+    if (search && search.trim() !== '') {
+      params.append('search', search.trim());
+    }
+    
+    const response = await api.get<ApiResponse<PageResponse<CardRequestDTO>>>(`/card-requests/paginated?${params.toString()}`);
+    return response.data;
+  },
+  
   getPendingRequestsWithDetails: async () => {
     const response = await api.get<ApiResponse<CardRequestDetailDTO[]>>('/card-requests/pending/details');
+    return response.data;
+  },
+  
+  getPendingRequestsWithDetailsPaginated: async (page: number = 0, size: number = 10) => {
+    const response = await api.get<ApiResponse<PageResponse<CardRequestDetailDTO>>>(`/card-requests/pending/details/paginated?page=${page}&size=${size}`);
     return response.data;
   },
   
