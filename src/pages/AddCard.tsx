@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Calendar, CheckCircle2, AlertCircle, RefreshCw, Lock, Edit2, Search, User, FileDown, FileText, Filter, X } from 'lucide-react';
+import { CreditCard, Calendar, CheckCircle2, AlertCircle, RefreshCw, Lock, Edit2, Search, User, FileDown, FileText, Filter, X, Eye } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -89,6 +89,14 @@ export default function AddCard() {
     availableCashLimit: 0,
   });
   const [isUpdating, setIsUpdating] = useState(false);
+
+  // View plain card number state
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
+  const [plainCardNumber, setPlainCardNumber] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   // User selection state
   const [allUsers, setAllUsers] = useState<UserDTO[]>([]);
@@ -510,6 +518,48 @@ export default function AddCard() {
     } finally {
       setIsUpdating(false);
     }
+  };
+
+  // Handle eye icon click to view plain card number
+  const handleViewCardNumberClick = (cardId: string) => {
+    setSelectedCardId(cardId);
+    setAdminPassword('');
+    setPlainCardNumber(null);
+    setPasswordError(null);
+    setIsPasswordDialogOpen(true);
+  };
+
+  // Handle admin password verification and fetch plain card number
+  const handleVerifyPassword = async () => {
+    if (!selectedCardId) return;
+    if (!adminPassword.trim()) {
+      setPasswordError('Please enter admin password');
+      return;
+    }
+
+    setIsVerifyingPassword(true);
+    setPasswordError(null);
+
+    try {
+      const response = await cardService.viewPlainCardNumber(selectedCardId, adminPassword);
+      setPlainCardNumber(response.data.plainCardNumber);
+      setPasswordError(null);
+    } catch (error) {
+      const errorMessage = handleApiError(error, 'Password Verification');
+      setPasswordError(errorMessage);
+      setPlainCardNumber(null);
+    } finally {
+      setIsVerifyingPassword(false);
+    }
+  };
+
+  // Handle closing the password dialog
+  const handleClosePasswordDialog = () => {
+    setIsPasswordDialogOpen(false);
+    setSelectedCardId(null);
+    setAdminPassword('');
+    setPlainCardNumber(null);
+    setPasswordError(null);
   };
 
   // Handle PDF Export
@@ -1186,6 +1236,14 @@ export default function AddCard() {
                         <span className="font-mono font-bold text-gray-900 text-sm">
                           {formatDisplayCardNumber(card.displayCardNumber)}
                         </span>
+                        <button
+                          onClick={() => card.cardNumber && handleViewCardNumberClick(card.cardNumber)}
+                          className="text-gray-400 hover:text-blue-900 transition-colors p-1 rounded hover:bg-blue-50"
+                          title="View full card number"
+                          disabled={!card.cardNumber}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
                       </div>
 
                       {/* Expiry Date */}
@@ -1489,6 +1547,110 @@ export default function AddCard() {
                 </div>
               </form>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* View Plain Card Number Dialog */}
+        <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+          <DialogContent className="sm:max-w-[400px] p-0">
+            <DialogClose onClose={handleClosePasswordDialog} />
+            <DialogHeader className="px-6 pt-6 pb-4">
+              <DialogTitle className="text-xl font-semibold text-gray-900">
+                View Full Card Number
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="px-6 pb-6 space-y-4">
+              {!plainCardNumber ? (
+                <>
+                  {/* Password Input */}
+                  <div className="space-y-2">
+                    <Label htmlFor="adminPassword" className="text-sm font-medium text-gray-700">
+                      Admin Password <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      id="adminPassword"
+                      type="password"
+                      placeholder="Enter admin password"
+                      value={adminPassword}
+                      onChange={(e) => {
+                        setAdminPassword(e.target.value);
+                        setPasswordError('');
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !isVerifyingPassword) {
+                          handleVerifyPassword();
+                        }
+                      }}
+                      disabled={isVerifyingPassword}
+                      className="h-10 bg-white border-gray-300 rounded-lg"
+                      autoFocus
+                    />
+                    {passwordError && (
+                      <p className="text-sm text-red-600 flex items-center gap-1">
+                        <AlertCircle className="h-4 w-4" />
+                        {passwordError}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Buttons */}
+                  <div className="flex gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleClosePasswordDialog}
+                      disabled={isVerifyingPassword}
+                      className="flex-1 h-10 border-gray-300 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={handleVerifyPassword}
+                      disabled={isVerifyingPassword || !adminPassword}
+                      className="flex-1 h-10 bg-blue-900 hover:bg-blue-950"
+                    >
+                      {isVerifyingPassword ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                          Verifying...
+                        </>
+                      ) : (
+                        'View Card Number'
+                      )}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Plain Card Number Display */}
+                  <div className="space-y-3">
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <div className="text-xs text-green-700 font-medium mb-2">FULL CARD NUMBER</div>
+                      <div className="font-mono font-bold text-green-900 text-lg tracking-wider">
+                        {plainCardNumber}
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 flex items-center gap-1">
+                      <Lock className="h-3 w-3" />
+                      This information is sensitive. Keep it secure.
+                    </p>
+                  </div>
+
+                  {/* Close Button */}
+                  <div className="pt-2">
+                    <Button
+                      type="button"
+                      onClick={handleClosePasswordDialog}
+                      className="w-full h-10 bg-blue-900 hover:bg-blue-950"
+                    >
+                      Close
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
           </DialogContent>
         </Dialog>
       </div>

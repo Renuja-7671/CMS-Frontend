@@ -56,6 +56,7 @@ api.interceptors.response.use(
 );
 
 export interface CardDTO {
+  cardNumber?: string; // Plain card number (optional, only included when needed)
   displayCardNumber: string;
   encryptionKey: string;
   expiryDate: string;
@@ -135,6 +136,22 @@ export const cardService = {
   
   getCardsByStatus: async (status: string) => {
     const response = await api.get<ApiResponse<CardDTO[]>>(`/cards/status/${status}`);
+    return response.data;
+  },
+
+  /**
+   * View plain card number with admin password verification
+   */
+  viewPlainCardNumber: async (cardId: string, adminPassword: string) => {
+    // Encrypt the request payload
+    const requestData = { cardId, adminPassword };
+    const encrypted = await encryptRequest(requestData, 'VIEW_PLAIN_CARD_NUMBER');
+    
+    const response = await api.post<ApiResponse<{
+      cardId: string;
+      plainCardNumber: string;
+      maskedCardNumber: string;
+    }>>('/cards/view-plain-number', encrypted);
     return response.data;
   },
 };
