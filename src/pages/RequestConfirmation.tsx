@@ -5,13 +5,16 @@ import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Pagination } from '../components/ui/pagination';
-import { Search } from 'lucide-react';
+import { Search, FileDown, FileText, FileSpreadsheet } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { cardRequestService } from '../services/cardService';
+import { reportService } from '../services/reportService';
 import type { CardRequestDetailDTO, PageResponse } from '../types/card';
 import { handleApiError, logError } from '../utils/errorHandler';
 import { getActiveUsers } from '../services/userService';
 import type { UserDTO } from '../types/user';
+import { downloadBlob, generateFileName, validateBlob } from '../utils/fileDownloadUtil';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 type ActionType = 'approve' | 'reject';
 
@@ -31,6 +34,7 @@ const RequestConfirmation = () => {
   const [filteredRequests, setFilteredRequests] = useState<CardRequestDetailDTO[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [requestTypeFilter, setRequestTypeFilter] = useState<'ALL' | 'ACTI' | 'CDCL'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PEND' | 'APPR' | 'RJCT'>('PEND');
   const [searchQuery, setSearchQuery] = useState('');
   
   // Pagination state
@@ -53,26 +57,32 @@ const RequestConfirmation = () => {
     request: null,
   });
 
-  // Fetch pending requests with pagination
-  const fetchPendingRequests = async () => {
+  // Export state
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [isExportingCSV, setIsExportingCSV] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+
+  // Fetch requests with pagination and status filter
+  const fetchRequests = async () => {
     try {
       setIsLoading(true);
-      const response = await cardRequestService.getPendingRequestsWithDetailsPaginated(currentPage, pageSize);
+      const response = await cardRequestService.getPendingRequestsWithDetailsPaginated(currentPage, pageSize, statusFilter);
       setPaginationInfo(response.data);
       setRequests(response.data.content || []);
     } catch (error) {
-      handleApiError(error, 'Failed to load pending requests');
+      handleApiError(error, 'Failed to load requests');
       setRequests([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Fetch when page or page size changes
+  // Fetch when page, page size, or status filter changes
   useEffect(() => {
-    fetchPendingRequests();
+    fetchRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize]);
+  }, [currentPage, pageSize, statusFilter]);
 
   // Fetch active users on mount
   useEffect(() => {
@@ -157,13 +167,77 @@ const RequestConfirmation = () => {
       setConfirmDialog({ isOpen: false, request: null, action: null });
 
       // Refresh the list in background (don't await to avoid blocking UI)
-      Promise.all([fetchPendingRequests()]).catch((error) => {
+      Promise.all([fetchRequests()]).catch((error) => {
         if (import.meta.env.DEV) {
           console.warn('Background refresh failed:', error);
         }
       });
     } catch (error) {
       handleApiError(error, `Failed to ${action} request`);
+    }
+  };
+
+  // Handle PDF Export
+  const handleExportPDF = async () => {
+    try {
+      setIsExportingPDF(true);
+      setExportError(null);
+      setExportSuccess(null);
+
+      // Pass current filters to the export function
+      const blob = await reportService.downloadCardRequestReportPDF({
+        status: statusFilter,
+        requestType: requestTypeFilter,
+        search: searchQuery,
+      });
+      
+      if (!validateBlob(blob, 'pdf')) {
+        throw new Error('Invalid PDF file received from server');
+      }
+      
+      const fileName = generateFileName('card-request-report', 'pdf');
+      downloadBlob(blob, fileName);
+      
+      setExportSuccess(`PDF report exported successfully as ${fileName}`);
+      setTimeout(() => setExportSuccess(null), 5000);
+    } catch (error) {
+      const errorMessage = handleApiError(error, 'PDF Export');
+      setExportError(errorMessage);
+      setTimeout(() => setExportError(null), 5000);
+    } finally {
+      setIsExportingPDF(false);
+    }
+  };
+
+  // Handle CSV Export
+  const handleExportCSV = async () => {
+    try {
+      setIsExportingCSV(true);
+      setExportError(null);
+      setExportSuccess(null);
+
+      // Pass current filters to the export function
+      const blob = await reportService.downloadCardRequestReportCSV({
+        status: statusFilter,
+        requestType: requestTypeFilter,
+        search: searchQuery,
+      });
+      
+      if (!validateBlob(blob, 'csv')) {
+        throw new Error('Invalid CSV file received from server');
+      }
+      
+      const fileName = generateFileName('card-request-report', 'csv');
+      downloadBlob(blob, fileName);
+      
+      setExportSuccess(`CSV report exported successfully as ${fileName}`);
+      setTimeout(() => setExportSuccess(null), 5000);
+    } catch (error) {
+      const errorMessage = handleApiError(error, 'CSV Export');
+      setExportError(errorMessage);
+      setTimeout(() => setExportError(null), 5000);
+    } finally {
+      setIsExportingCSV(false);
     }
   };
 
@@ -227,22 +301,7 @@ const RequestConfirmation = () => {
     }
   };
 
-  const formatCurrency = (amount: number | null | undefined): string => {
-    try {
-      if (amount === null || amount === undefined || typeof amount !== 'number') {
-        return '0';
-      }
-      return amount.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.warn('Error formatting currency:', error);
-      }
-      return '0';
-    }
-  };
+
 
   const getStatusBadgeVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
     try {
@@ -320,7 +379,7 @@ const RequestConfirmation = () => {
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
-            <p className="mt-4 text-gray-600">Loading pending requests...</p>
+            <p className="mt-4 text-gray-600">Loading requests...</p>
           </div>
         </div>
       </div>
@@ -335,15 +394,117 @@ const RequestConfirmation = () => {
             <div>
               <CardTitle className="text-2xl text-white">Request Confirmation</CardTitle>
               <CardDescription className="text-blue-100">
-                Review and process pending card activation/deactivation requests
+                Review and process card activation/deactivation requests
               </CardDescription>
             </div>
           </div>
         </CardHeader>
 
+        {/* Export Buttons Section */}
+        <div className="bg-white border-b border-gray-200 px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <FileDown className="h-4 w-4 text-gray-600" />
+              <span className="text-sm font-medium text-gray-700">Export Reports:</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleExportPDF}
+                disabled={isExportingPDF || isExportingCSV || isLoading}
+                variant="outline"
+                size="sm"
+                className="border-red-300 text-red-700 hover:bg-red-50"
+              >
+                {isExportingPDF ? (
+                  <>
+                    <div className="h-3.5 w-3.5 mr-1.5 animate-spin rounded-full border-2 border-solid border-current border-r-transparent" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="h-3.5 w-3.5 mr-1.5" />
+                    Export PDF
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={handleExportCSV}
+                disabled={isExportingPDF || isExportingCSV || isLoading}
+                variant="outline"
+                size="sm"
+                className="border-green-300 text-green-700 hover:bg-green-50"
+              >
+                {isExportingCSV ? (
+                  <>
+                    <div className="h-3.5 w-3.5 mr-1.5 animate-spin rounded-full border-2 border-solid border-current border-r-transparent" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" />
+                    Export CSV
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {/* Export Success/Error Messages */}
+          {exportSuccess && (
+            <div className="mt-3 p-2.5 bg-green-50 border border-green-200 rounded-md">
+              <p className="text-sm text-green-800">{exportSuccess}</p>
+            </div>
+          )}
+          {exportError && (
+            <div className="mt-3 p-2.5 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-800">{exportError}</p>
+            </div>
+          )}
+        </div>
+
         {/* Filter Section */}
         {requests.length > 0 && (
           <div className="bg-gray-50 border-b border-gray-200 px-6 py-4">
+            {/* Status Filter */}
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-sm font-medium text-gray-700">Filter by Status:</span>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setStatusFilter('ALL')}
+                  variant={statusFilter === 'ALL' ? 'default' : 'outline'}
+                  size="sm"
+                  className={statusFilter === 'ALL' ? 'bg-blue-900 hover:bg-blue-950' : 'hover:bg-gray-100'}
+                >
+                  All Statuses
+                </Button>
+                <Button
+                  onClick={() => setStatusFilter('PEND')}
+                  variant={statusFilter === 'PEND' ? 'default' : 'outline'}
+                  size="sm"
+                  className={statusFilter === 'PEND' ? 'bg-yellow-600 hover:bg-yellow-700' : 'hover:bg-yellow-50 text-yellow-700 border-yellow-300'}
+                >
+                  Pending
+                </Button>
+                <Button
+                  onClick={() => setStatusFilter('APPR')}
+                  variant={statusFilter === 'APPR' ? 'default' : 'outline'}
+                  size="sm"
+                  className={statusFilter === 'APPR' ? 'bg-green-600 hover:bg-green-700' : 'hover:bg-green-50 text-green-700 border-green-300'}
+                >
+                  Approved
+                </Button>
+                <Button
+                  onClick={() => setStatusFilter('RJCT')}
+                  variant={statusFilter === 'RJCT' ? 'default' : 'outline'}
+                  size="sm"
+                  className={statusFilter === 'RJCT' ? 'bg-red-600 hover:bg-red-700' : 'hover:bg-red-50 text-red-700 border-red-300'}
+                >
+                  Rejected
+                </Button>
+              </div>
+            </div>
+            
+            {/* Request Type Filter */}
             <div className="flex items-center justify-between gap-4 mb-3">
               <div className="flex items-center gap-3">
                 <span className="text-sm font-medium text-gray-700">Filter by Request Type:</span>
@@ -394,8 +555,16 @@ const RequestConfirmation = () => {
           {requests.length === 0 ? (
             <div className="py-12">
               <div className="text-center text-gray-500">
-                <p className="text-lg font-medium">No pending requests</p>
-                <p className="text-sm mt-1">All requests have been processed</p>
+                <p className="text-lg font-medium">
+                  {statusFilter === 'PEND' ? 'No pending requests' : 
+                   statusFilter === 'APPR' ? 'No approved requests' :
+                   statusFilter === 'RJCT' ? 'No rejected requests' : 'No requests'}
+                </p>
+                <p className="text-sm mt-1">
+                  {statusFilter === 'PEND' ? 'All requests have been processed' :
+                   statusFilter === 'APPR' ? 'No requests have been approved yet' :
+                   statusFilter === 'RJCT' ? 'No requests have been rejected yet' : 'No requests found'}
+                </p>
               </div>
             </div>
           ) : filteredRequests.length === 0 ? (
@@ -421,84 +590,118 @@ const RequestConfirmation = () => {
                   key={request.requestId} 
                   className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow duration-200"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                  {/* Request ID and Type */}
-                  <div className="flex items-center gap-3 min-w-[140px]">
-                    <div>
-                      <div className="text-xs text-gray-500">Request #{request.requestId}</div>
+                  {/* Top Row: Main Info */}
+                  <div className="grid grid-cols-12 gap-3 items-center mb-3">
+                    {/* Request ID and Type - 2 cols */}
+                    <div className="col-span-2">
+                      <div className="text-xs text-gray-500 mb-1">Request #{request.requestId}</div>
                       <Badge 
                         variant={getRequestTypeBadgeVariant(request.requestType)}
-                        className="mt-1"
+                        className="text-xs"
                       >
                         {request.requestType === 'ACTI' ? 'Activation' : 'Deactivation'}
                       </Badge>
                     </div>
-                  </div>
 
-                  {/* Card Number */}
-                  <div className="flex items-center gap-2 min-w-[180px]">
-                    <span className="font-mono text-sm font-medium text-gray-900">
-                      {formatDisplayCardNumber(request.displayCardNumber)}
-                    </span>
-                  </div>
-
-                  {/* Card Status Badge */}
-                  <div className="min-w-[140px]">
-                    <Badge 
-                      variant={getStatusBadgeVariant(request.cardStatus)} 
-                      className="text-xs px-3 py-1"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
-                        <span>{getStatusLabel(request.cardStatus)}</span>
-                      </span>
-                    </Badge>
-                  </div>
-
-                  {/* Request Date */}
-                  <div className="text-sm text-gray-600 min-w-[140px]">
-                    {formatDate(request.requestedAt, true)}
-                  </div>
-
-                  {/* Reason Preview */}
-                  {request.reason && (
-                    <div className="flex-1 min-w-[200px] max-w-[300px]">
-                      <p className="text-sm text-gray-600 truncate" title={request.reason}>
-                        {request.reason}
-                      </p>
+                    {/* Request Status - 2 cols */}
+                    <div className="col-span-2">
+                      <div className="text-xs text-gray-500 mb-1">Status</div>
+                      <Badge 
+                        variant={
+                          request.requestStatus === 'PEND' ? 'outline' :
+                          request.requestStatus === 'APPR' ? 'default' : 'destructive'
+                        }
+                        className={
+                          request.requestStatus === 'PEND' ? 'bg-yellow-50 text-yellow-700 border-yellow-300' :
+                          request.requestStatus === 'APPR' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+                        }
+                      >
+                        {request.requestStatus === 'PEND' ? 'Pending' :
+                         request.requestStatus === 'APPR' ? 'Approved' : 'Rejected'}
+                      </Badge>
                     </div>
-                  )}
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setDetailsDialog({ isOpen: true, request })}
-                      className="min-w-[80px]"
-                    >
-                      Details
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleAction(request, 'reject')}
-                      className="min-w-[80px] text-red-600 hover:bg-red-50 border-red-300"
-                    >
-                      Reject
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => handleAction(request, 'approve')}
-                      className="min-w-[80px] bg-green-600 hover:bg-green-700"
-                    >
-                      Approve
-                    </Button>
+                    {/* Card Number - 3 cols */}
+                    <div className="col-span-3">
+                      <div className="text-xs text-gray-500 mb-1">Card Number</div>
+                      <span className="font-mono text-sm font-medium text-gray-900">
+                        {formatDisplayCardNumber(request.displayCardNumber)}
+                      </span>
+                    </div>
+
+                    {/* Card Status - 2 cols */}
+                    <div className="col-span-2">
+                      <div className="text-xs text-gray-500 mb-1">Card Status</div>
+                      <Badge 
+                        variant={getStatusBadgeVariant(request.cardStatus)} 
+                        className="text-xs px-2 py-1"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                          <span>{getStatusLabel(request.cardStatus)}</span>
+                        </span>
+                      </Badge>
+                    </div>
+
+                    {/* Request Date - 3 cols */}
+                    <div className="col-span-3">
+                      <div className="text-xs text-gray-500 mb-1">Requested Date</div>
+                      <div className="text-sm text-gray-900">
+                        {formatDate(request.requestedAt, true)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Bottom Row: Reason and Actions */}
+                  <div className="flex items-center justify-between gap-3 pt-3 border-t border-gray-100">
+                    {/* Reason - flexible width */}
+                    <div className="flex-1 min-w-0">
+                      {request.reason ? (
+                        <>
+                          <div className="text-xs text-gray-500 mb-1">Reason</div>
+                          <p className="text-sm text-gray-700 truncate" title={request.reason}>
+                            {request.reason}
+                          </p>
+                        </>
+                      ) : (
+                        <div className="text-sm text-gray-400 italic">No reason provided</div>
+                      )}
+                    </div>
+
+                    {/* Actions - fixed width */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDetailsDialog({ isOpen: true, request })}
+                        className="min-w-[80px]"
+                      >
+                        Details
+                      </Button>
+                      {request.requestStatus === 'PEND' && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAction(request, 'reject')}
+                            className="min-w-[80px] text-red-600 hover:bg-red-50 border-red-300"
+                          >
+                            Reject
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleAction(request, 'approve')}
+                            className="min-w-[80px] bg-green-600 hover:bg-green-700"
+                          >
+                            Approve
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
         )}
       </CardContent>
       

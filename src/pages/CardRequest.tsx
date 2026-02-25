@@ -19,6 +19,7 @@ import type { CreateCardRequestDTO, CardRequestDTO, PageResponse } from '../type
 import { handleApiError } from '../utils/errorHandler';
 import { getActiveUsers } from '../services/userService';
 import type { UserDTO } from '../types/user';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function CardRequest() {
   const [cards, setCards] = useState<CardDTO[]>([]);
@@ -83,14 +84,9 @@ export default function CardRequest() {
     }
   };
 
-  // Fetch cards when page, page size, status filter, or search query changes
-  // Reset to page 0 when filters change
+  // Fetch cards when filters change - reset to page 0
   useEffect(() => {
-    if (currentPage === 0) {
-      fetchCards();
-    } else {
-      setCurrentPage(0); // This will trigger the effect again with page 0
-    }
+    setCurrentPage(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, searchQuery]);
 
@@ -188,21 +184,7 @@ export default function CardRequest() {
     }
   };
 
-  // Safely format currency
-  const formatCurrency = (amount: number | null | undefined) => {
-    try {
-      if (amount === null || amount === undefined || isNaN(amount)) return '0';
-      return amount.toLocaleString('en-US', {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-      });
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.warn('Error formatting currency:', error);
-      }
-      return '0';
-    }
-  };
+
 
   // Handle activate/deactivate button click
   const handleRequestClick = (card: CardDTO, action: 'ACTI' | 'CDCL') => {

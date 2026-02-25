@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { CreateCardBackendRequest, UpdateCardRequest, ApiResponse, PageResponse, CreateCardRequestDTO, CardRequestDTO, CardRequestDetailDTO } from '../types/card';
+import { encryptRequest, decryptResponse, isEncryptedResponse } from './encryptionService';
 
 const API_BASE_URL = 'http://localhost:8090/api';
 
@@ -10,10 +11,25 @@ const api = axios.create({
   },
 });
 
-// Response interceptor for error handling
-// Backend returns 200 OK for all responses with a success flag
+// Response interceptor for error handling and automatic decryption
 api.interceptors.response.use(
-  (response) => {
+  async (response) => {
+    // Check if response is encrypted
+    if (response.data && isEncryptedResponse(response.data)) {
+      try {
+        // Automatically decrypt encrypted responses
+        const decrypted = await decryptResponse(response.data);
+        response.data = decrypted;
+      } catch (error) {
+        console.error('Failed to decrypt response:', error);
+        return Promise.reject({
+          response: response,
+          isDecryptionError: true,
+          message: 'Failed to decrypt response'
+        });
+      }
+    }
+
     // Check if response has success flag (all API responses should have this)
     if (response.data && typeof response.data.success === 'boolean') {
       // If success is false, treat as error even though HTTP status is 200
@@ -56,7 +72,9 @@ export interface CardDTO {
 
 export const cardService = {
   createCard: async (cardData: CreateCardBackendRequest) => {
-    const response = await api.post<ApiResponse<CardDTO>>('/cards', cardData);
+    // Use encrypted endpoint for all card creation
+    const encrypted = await encryptRequest(cardData, 'CREATE_CARD');
+    const response = await api.post<ApiResponse<CardDTO>>('/cards', encrypted);
     return response.data;
   },
 
@@ -88,30 +106,30 @@ export const cardService = {
   },
   
   updateCard: async (updateData: UpdateCardRequest) => {
-    const response = await api.put<ApiResponse<CardDTO>>('/cards', updateData);
+    // Encrypt update request
+    const encrypted = await encryptRequest(updateData, 'UPDATE_CARD');
+    const response = await api.put<ApiResponse<CardDTO>>('/cards', encrypted);
     return response.data;
   },
   
   getAllCards: async () => {
-    const response = await api.get<ApiResponse<CardDTO[]>>('/cards');
+    // Use encrypted POST endpoint instead of GET
+    const encrypted = await encryptRequest({}, 'GET_ALL_CARDS');
+    const response = await api.post<ApiResponse<CardDTO[]>>('/cards/query/all', encrypted);
     return response.data;
   },
   
   getAllCardsPaginated: async (page: number = 0, size: number = 10, status?: string, search?: string) => {
-    const params = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString(),
-    });
+    // Use encrypted POST endpoint with query parameters in body
+    const queryRequest = {
+      page,
+      size,
+      status: status && status !== 'ALL' ? status : undefined,
+      search: search && search.trim() !== '' ? search.trim() : undefined,
+    };
     
-    if (status && status !== 'ALL') {
-      params.append('status', status);
-    }
-    
-    if (search && search.trim() !== '') {
-      params.append('search', search.trim());
-    }
-    
-    const response = await api.get<ApiResponse<PageResponse<CardDTO>>>(`/cards/paginated?${params.toString()}`);
+    const encrypted = await encryptRequest(queryRequest, 'GET_CARDS_PAGINATED');
+    const response = await api.post<ApiResponse<PageResponse<CardDTO>>>('/cards/query/paginated', encrypted);
     return response.data;
   },
   
@@ -123,30 +141,30 @@ export const cardService = {
 
 export const cardRequestService = {
   createCardRequest: async (requestData: CreateCardRequestDTO) => {
-    const response = await api.post<ApiResponse<CardRequestDTO>>('/card-requests', requestData);
+    // Encrypt card request creation
+    const encrypted = await encryptRequest(requestData, 'CREATE_CARD_REQUEST');
+    const response = await api.post<ApiResponse<CardRequestDTO>>('/card-requests', encrypted);
     return response.data;
   },
   
   getAllCardRequests: async () => {
-    const response = await api.get<ApiResponse<CardRequestDTO[]>>('/card-requests');
+    // Use encrypted POST endpoint
+    const encrypted = await encryptRequest({}, 'GET_ALL_CARD_REQUESTS');
+    const response = await api.post<ApiResponse<CardRequestDTO[]>>('/card-requests/query/all', encrypted);
     return response.data;
   },
   
   getAllCardRequestsPaginated: async (page: number = 0, size: number = 10, status?: string, search?: string) => {
-    const params = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString(),
-    });
+    // Use encrypted POST endpoint with query parameters in body
+    const queryRequest = {
+      page,
+      size,
+      status: status && status !== 'ALL' ? status : undefined,
+      search: search && search.trim() !== '' ? search.trim() : undefined,
+    };
     
-    if (status && status !== 'ALL') {
-      params.append('status', status);
-    }
-    
-    if (search && search.trim() !== '') {
-      params.append('search', search.trim());
-    }
-    
-    const response = await api.get<ApiResponse<PageResponse<CardRequestDTO>>>(`/card-requests/paginated?${params.toString()}`);
+    const encrypted = await encryptRequest(queryRequest, 'GET_CARD_REQUESTS_PAGINATED');
+    const response = await api.post<ApiResponse<PageResponse<CardRequestDTO>>>('/card-requests/query/paginated', encrypted);
     return response.data;
   },
   
@@ -155,21 +173,35 @@ export const cardRequestService = {
     return response.data;
   },
   
-  getPendingRequestsWithDetailsPaginated: async (page: number = 0, size: number = 10) => {
-    const response = await api.get<ApiResponse<PageResponse<CardRequestDetailDTO>>>(`/card-requests/pending/details/paginated?page=${page}&size=${size}`);
+  getPendingRequestsWithDetailsPaginated: async (page: number = 0, size: number = 10, status: string = 'PEND') => {
+    // Use encrypted POST endpoint
+    const queryRequest = {
+      page,
+      size,
+      status,
+    };
+    
+    const encrypted = await encryptRequest(queryRequest, 'GET_PENDING_REQUESTS_WITH_DETAILS');
+    const response = await api.post<ApiResponse<PageResponse<CardRequestDetailDTO>>>('/card-requests/query/pending/details', encrypted);
     return response.data;
   },
   
   approveRequest: async (requestId: number, approvedUser: string) => {
+    // Encrypt approval request
+    const encrypted = await encryptRequest({ approvedUser }, 'APPROVE_REQUEST');
     const response = await api.put<ApiResponse<CardRequestDetailDTO>>(
-      `/card-requests/${requestId}/approve/details?approvedUser=${encodeURIComponent(approvedUser)}`
+      `/card-requests/${requestId}/approve/details`,
+      encrypted
     );
     return response.data;
   },
   
   rejectRequest: async (requestId: number, approvedUser: string) => {
+    // Encrypt rejection request
+    const encrypted = await encryptRequest({ approvedUser }, 'REJECT_REQUEST');
     const response = await api.put<ApiResponse<CardRequestDetailDTO>>(
-      `/card-requests/${requestId}/reject/details?approvedUser=${encodeURIComponent(approvedUser)}`
+      `/card-requests/${requestId}/reject/details`,
+      encrypted
     );
     return response.data;
   },

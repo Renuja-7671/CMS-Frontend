@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Calendar, CheckCircle2, AlertCircle, RefreshCw, Lock, Edit2, Search, User } from 'lucide-react';
+import { CreditCard, Calendar, CheckCircle2, AlertCircle, RefreshCw, Lock, Edit2, Search, User, FileDown, FileText, Filter, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -14,12 +14,15 @@ import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '../components/ui/dialog';
 import { Pagination } from '../components/ui/pagination';
 import { cardService, type CardDTO } from '../services/cardService';
+import { reportService } from '../services/reportService';
 import { getAllUsers } from '../services/userService';
 import type { CreateCardRequest, UpdateCardRequest, PageResponse } from '../types/card';
 import type { UserDTO } from '../types/user';
 import { encryptPayload } from '../utils/encryptionUtil';
 import { fetchPublicKey, encryptAESKey } from '../utils/rsaEncryptionUtil';
 import { handleApiError } from '../utils/errorHandler';
+import { downloadBlob, generateFileName, validateBlob } from '../utils/fileDownloadUtil';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function AddCard() {
   const [formData, setFormData] = useState<CreateCardRequest>({
@@ -58,6 +61,23 @@ export default function AddCard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IACT' | 'CACT' | 'DACT'>('ALL');
 
+  // Export state
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [isExportingCSV, setIsExportingCSV] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+  
+  // Report filter state
+  const [showReportFilters, setShowReportFilters] = useState(false);
+  const [reportFilters, setReportFilters] = useState({
+    expiryDateFrom: '',
+    expiryDateTo: '',
+    creditLimitMin: '',
+    creditLimitMax: '',
+    cashLimitMin: '',
+    cashLimitMax: '',
+  });
+
   // Edit card state
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingCard, setEditingCard] = useState<CardDTO | null>(null);
@@ -76,6 +96,14 @@ export default function AddCard() {
   const [selectedUpdateUser, setSelectedUpdateUser] = useState<string>('');
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+
+  // Helper function to get last day of month from YYYY-MM format
+  const getLastDayOfMonth = (yearMonth: string): string => {
+    const [year, month] = yearMonth.split('-').map(Number);
+    // Create date for the first day of next month, then subtract 1 day
+    const lastDay = new Date(year, month, 0).getDate();
+    return `${yearMonth}-${lastDay.toString().padStart(2, '0')}`;
+  };
 
   // Fetch all users on component mount
   useEffect(() => {
@@ -117,14 +145,9 @@ export default function AddCard() {
     }
   };
 
-  // Fetch cards when page, page size, status filter, or search query changes
-  // Reset to page 0 when filters change
+  // Fetch cards when filters change - reset to page 0
   useEffect(() => {
-    if (currentPage === 0) {
-      fetchCards();
-    } else {
-      setCurrentPage(0); // This will trigger the effect again with page 0
-    }
+    setCurrentPage(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, searchQuery]);
 
@@ -398,17 +421,29 @@ export default function AddCard() {
 
   // Open edit dialog with card data
   const handleEditClick = (card: CardDTO) => {
-    setEditingCard(card);
-    // Convert expiryDate from "YYYY-MM-DD" to "YYYY-MM" for month input
-    const expiryMonth = card.expiryDate.substring(0, 7);
-    setEditFormData({
-      expiryDate: expiryMonth,
-      creditLimit: card.creditLimit,
-      cashLimit: card.cashLimit,
-      availableCreditLimit: card.availableCreditLimit,
-      availableCashLimit: card.availableCashLimit,
-    });
-    setIsEditDialogOpen(true);
+    try {
+      setEditingCard(card);
+      // Convert expiryDate from "YYYY-MM-DD" to "YYYY-MM" for month input
+      // Handle both string and potential date object formats
+      const expiryDateStr = typeof card.expiryDate === 'string' 
+        ? card.expiryDate 
+        : String(card.expiryDate || '');
+      const expiryMonth = expiryDateStr.substring(0, 7);
+      setEditFormData({
+        expiryDate: expiryMonth,
+        creditLimit: card.creditLimit,
+        cashLimit: card.cashLimit,
+        availableCreditLimit: card.availableCreditLimit,
+        availableCashLimit: card.availableCashLimit,
+      });
+      setIsEditDialogOpen(true);
+    } catch (error) {
+      console.error('Error opening edit dialog:', error);
+      setSubmitStatus({
+        type: 'error',
+        message: 'Failed to open edit dialog. Please try again.',
+      });
+    }
   };
 
   // Handle edit form field changes
@@ -474,6 +509,100 @@ export default function AddCard() {
       });
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  // Handle PDF Export
+  const handleExportPDF = async () => {
+    try {
+      setIsExportingPDF(true);
+      setExportError(null);
+      setExportSuccess(null);
+
+      // Convert month format (YYYY-MM) to date format (YYYY-MM-DD) for backend
+      const expiryDateFrom = reportFilters.expiryDateFrom 
+        ? `${reportFilters.expiryDateFrom}-01` 
+        : undefined;
+      
+      // For "to" date, use the last day of the month
+      const expiryDateTo = reportFilters.expiryDateTo 
+        ? getLastDayOfMonth(reportFilters.expiryDateTo) 
+        : undefined;
+
+      // Pass current filters to the export function
+      const blob = await reportService.downloadCardReportPDF({
+        status: statusFilter,
+        search: searchQuery,
+        expiryDateFrom,
+        expiryDateTo,
+        creditLimitMin: reportFilters.creditLimitMin ? Number(reportFilters.creditLimitMin) : undefined,
+        creditLimitMax: reportFilters.creditLimitMax ? Number(reportFilters.creditLimitMax) : undefined,
+        cashLimitMin: reportFilters.cashLimitMin ? Number(reportFilters.cashLimitMin) : undefined,
+        cashLimitMax: reportFilters.cashLimitMax ? Number(reportFilters.cashLimitMax) : undefined,
+      });
+      
+      if (!validateBlob(blob, 'pdf')) {
+        throw new Error('Invalid PDF file received from server');
+      }
+      
+      const fileName = generateFileName('card-report', 'pdf');
+      downloadBlob(blob, fileName);
+      
+      setExportSuccess(`PDF report exported successfully as ${fileName}`);
+      setTimeout(() => setExportSuccess(null), 5000);
+    } catch (error) {
+      const errorMessage = handleApiError(error, 'PDF Export');
+      setExportError(errorMessage);
+      setTimeout(() => setExportError(null), 5000);
+    } finally {
+      setIsExportingPDF(false);
+    }
+  };
+
+  // Handle CSV Export
+  const handleExportCSV = async () => {
+    try {
+      setIsExportingCSV(true);
+      setExportError(null);
+      setExportSuccess(null);
+
+      // Convert month format (YYYY-MM) to date format (YYYY-MM-DD) for backend
+      const expiryDateFrom = reportFilters.expiryDateFrom 
+        ? `${reportFilters.expiryDateFrom}-01` 
+        : undefined;
+      
+      // For "to" date, use the last day of the month
+      const expiryDateTo = reportFilters.expiryDateTo 
+        ? getLastDayOfMonth(reportFilters.expiryDateTo) 
+        : undefined;
+
+      // Pass current filters to the export function
+      const blob = await reportService.downloadCardReportCSV({
+        status: statusFilter,
+        search: searchQuery,
+        expiryDateFrom,
+        expiryDateTo,
+        creditLimitMin: reportFilters.creditLimitMin ? Number(reportFilters.creditLimitMin) : undefined,
+        creditLimitMax: reportFilters.creditLimitMax ? Number(reportFilters.creditLimitMax) : undefined,
+        cashLimitMin: reportFilters.cashLimitMin ? Number(reportFilters.cashLimitMin) : undefined,
+        cashLimitMax: reportFilters.cashLimitMax ? Number(reportFilters.cashLimitMax) : undefined,
+      });
+      
+      if (!validateBlob(blob, 'csv')) {
+        throw new Error('Invalid CSV file received from server');
+      }
+      
+      const fileName = generateFileName('card-report', 'csv');
+      downloadBlob(blob, fileName);
+      
+      setExportSuccess(`CSV report exported successfully as ${fileName}`);
+      setTimeout(() => setExportSuccess(null), 5000);
+    } catch (error) {
+      const errorMessage = handleApiError(error, 'CSV Export');
+      setExportError(errorMessage);
+      setTimeout(() => setExportError(null), 5000);
+    } finally {
+      setIsExportingCSV(false);
     }
   };
 
@@ -795,6 +924,178 @@ export default function AddCard() {
             </div>
           </CardHeader>
 
+          {/* Export Success/Error Messages */}
+          {(exportSuccess || exportError) && (
+            <div className={`mx-4 mt-4 p-3 rounded-lg border ${
+              exportSuccess 
+                ? 'bg-green-50 border-green-200 text-green-800' 
+                : 'bg-red-50 border-red-200 text-red-800'
+            }`}>
+              <div className="flex items-center gap-2">
+                {exportSuccess ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <AlertCircle className="h-4 w-4" />
+                )}
+                <p className="text-sm font-medium">{exportSuccess || exportError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Export Buttons Section */}
+          <div className="bg-white border-b border-gray-200 px-4 pt-4 pb-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <FileDown className="h-4 w-4 text-gray-600" />
+                <span className="text-sm font-medium text-gray-700">Export Reports:</span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setShowReportFilters(!showReportFilters)}
+                  variant="outline"
+                  size="sm"
+                  className={`border-gray-300 ${showReportFilters ? 'bg-gray-100' : ''}`}
+                >
+                  <Filter className="h-3.5 w-3.5 mr-1.5" />
+                  {showReportFilters ? 'Hide Filters' : 'Show Filters'}
+                </Button>
+                <Button
+                  onClick={handleExportPDF}
+                  disabled={isExportingPDF || isExportingCSV || isLoadingCards}
+                  variant="outline"
+                  size="sm"
+                  className="border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {isExportingPDF ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-3.5 w-3.5 mr-1.5" />
+                      Export as PDF
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleExportCSV}
+                  disabled={isExportingPDF || isExportingCSV || isLoadingCards}
+                  variant="outline"
+                  size="sm"
+                  className="border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-50"
+                >
+                  {isExportingCSV ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-3.5 w-3.5 mr-1.5" />
+                      Export as CSV
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Report Filters Panel */}
+            {showReportFilters && (
+              <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-700">Report Filters</h3>
+                  <Button
+                    onClick={() => setReportFilters({
+                      expiryDateFrom: '',
+                      expiryDateTo: '',
+                      creditLimitMin: '',
+                      creditLimitMax: '',
+                      cashLimitMin: '',
+                      cashLimitMax: '',
+                    })}
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs"
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Clear All
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {/* Expiry Date Range */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700">Expiry Month From</Label>
+                    <Input
+                      type="month"
+                      value={reportFilters.expiryDateFrom}
+                      onChange={(e) => setReportFilters({ ...reportFilters, expiryDateFrom: e.target.value })}
+                      className="text-sm"
+                      placeholder="YYYY-MM"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700">Expiry Month To</Label>
+                    <Input
+                      type="month"
+                      value={reportFilters.expiryDateTo}
+                      onChange={(e) => setReportFilters({ ...reportFilters, expiryDateTo: e.target.value })}
+                      className="text-sm"
+                      placeholder="YYYY-MM"
+                    />
+                  </div>
+
+                  {/* Credit Limit Range */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700">Min Credit Limit</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 10000"
+                      value={reportFilters.creditLimitMin}
+                      onChange={(e) => setReportFilters({ ...reportFilters, creditLimitMin: e.target.value })}
+                      className="text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700">Max Credit Limit</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 100000"
+                      value={reportFilters.creditLimitMax}
+                      onChange={(e) => setReportFilters({ ...reportFilters, creditLimitMax: e.target.value })}
+                      className="text-sm"
+                    />
+                  </div>
+
+                  {/* Cash Limit Range */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700">Min Cash Limit</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 5000"
+                      value={reportFilters.cashLimitMin}
+                      onChange={(e) => setReportFilters({ ...reportFilters, cashLimitMin: e.target.value })}
+                      className="text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700">Max Cash Limit</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 50000"
+                      value={reportFilters.cashLimitMax}
+                      onChange={(e) => setReportFilters({ ...reportFilters, cashLimitMax: e.target.value })}
+                      className="text-sm"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-3">
+                  Note: Expiry date filters use month/year format (e.g., 2026-12). All filters are applied along with status and search when exporting reports.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Search and Filter Section */}
           <div className="bg-gray-50 border-b border-gray-200 p-4 space-y-4">
             {/* Search Bar */}
@@ -922,10 +1223,7 @@ export default function AddCard() {
                       <div className="text-right flex-shrink-0">
                         <div className="text-xs text-gray-500">Credit</div>
                         <div className="font-semibold text-gray-900 text-sm">
-                          {card.creditLimit.toLocaleString('en-US', {
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 0,
-                          })}
+                          {formatCurrency(card.creditLimit)}
                         </div>
                       </div>
 
@@ -933,10 +1231,7 @@ export default function AddCard() {
                       <div className="text-right flex-shrink-0">
                         <div className="text-xs text-gray-500">Avail. Credit</div>
                         <div className="font-semibold text-blue-900 text-sm">
-                          {card.availableCreditLimit.toLocaleString('en-US', {
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 0,
-                          })}
+                          {formatCurrency(card.availableCreditLimit)}
                         </div>
                       </div>
 
@@ -944,10 +1239,7 @@ export default function AddCard() {
                       <div className="text-right flex-shrink-0">
                         <div className="text-xs text-gray-500">Cash</div>
                         <div className="font-semibold text-gray-900 text-sm">
-                          {card.cashLimit.toLocaleString('en-US', {
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 0,
-                          })}
+                          {formatCurrency(card.cashLimit)}
                         </div>
                       </div>
 
@@ -955,10 +1247,7 @@ export default function AddCard() {
                       <div className="text-right flex-shrink-0">
                         <div className="text-xs text-gray-500">Avail. Cash</div>
                         <div className="font-semibold text-blue-900 text-sm">
-                          {card.availableCashLimit.toLocaleString('en-US', {
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 0,
-                          })}
+                          {formatCurrency(card.availableCashLimit)}
                         </div>
                       </div>
 
@@ -966,10 +1255,13 @@ export default function AddCard() {
                       <div className="text-right flex-shrink-0">
                         <div className="text-xs text-gray-500">Updated</div>
                         <div className="text-sm font-medium text-gray-700">
-                          {new Date(card.lastUpdateTime).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                          })}
+                          {card.lastUpdateTime && !isNaN(new Date(card.lastUpdateTime).getTime())
+                            ? new Date(card.lastUpdateTime).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })
+                            : 'N/A'}
                         </div>
                       </div>
 
